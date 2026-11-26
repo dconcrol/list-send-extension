@@ -1,0 +1,73 @@
+{
+  "manifest_version": 3,
+  "name": "ConnectV",
+  "version": "1.1.0",
+  "description": "List send for Gmail and Private Email: upload CSV/Excel, templates, and direct send. Gmail also supports schedule send.",
+  "permissions": ["storage", "debugger"],
+  "host_permissions": [
+    "https://mail.google.com/*",
+    "https://privateemail.com/*",
+    "https://www.spacemail.com/*",
+    "https://spacemail.com/*"
+  ],
+  "background": {
+    "service_worker": "src/background/sw.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://mail.google.com/*"],
+      "js": ["src/content/identity-main.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://mail.google.com/*"],
+      "js": [
+        "src/lib/human.js",
+        "src/lib/api.js",
+        "src/lib/sheet.js",
+        "src/content/gmail.js",
+        "src/content/panel.js"
+      ],
+      "css": ["src/content/panel.css"],
+      "run_at": "document_idle",
+      "all_frames": false
+    },
+    {
+      "matches": [
+        "https://privateemail.com/spm/mail*",
+        "https://privateemail.com/spm/*/mail*",
+        "https://privateemail.com/pm/mail*",
+        "https://privateemail.com/pm/*/mail*",
+        "https://www.spacemail.com/mail*",
+        "https://www.spacemail.com/*/mail*",
+        "https://spacemail.com/mail*",
+        "https://spacemail.com/*/mail*"
+      ],
+      "js": [
+        "src/lib/human.js",
+        "src/lib/api.js",
+        "src/lib/sheet.js",
+        "src/content/privateemail.js",
+        "src/content/panel.js"
+      ],
+      "css": ["src/content/panel.css"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["src/content/panel-ui.css"],
+      "matches": [
+        "https://mail.google.com/*",
+        "https://privateemail.com/*",
+        "https://www.spacemail.com/*",
+        "https://spacemail.com/*"
+      ]
+    }
+  ],
+  "action": {
+    "default_title": "ConnectV"
+  }
+}

@@ -1,0 +1,14 @@
+/* Page-level dock: Gmail content takes left 70vw when the list-send panel is open. */
+
+html.cvlist-docked {
+  width: 70vw !important;
+  min-width: 70vw !important;
+  max-width: 70vw !important;
+}
+
+html.cvlist-docked body {
+  width: 100% !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
+  transform: translateZ(0) !important;
+}
