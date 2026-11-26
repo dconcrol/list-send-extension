@@ -63,7 +63,7 @@
           This is a local preview of the ConnectV side panel after the v1.2.0 update, including the
           new <strong>From alias</strong> selector on the Main tab.
         </p>
-        <span class="badge">manifest version 1.3.0</span>
+        <span class="badge">manifest version 1.4.0</span>
       </div>
       <div id="cvlist-host"></div>
     </div>
@@ -112,19 +112,14 @@
               </div>
             </div>
             <div class="tabs">
-              <button type="button" class="tab tab-alias">Aliases (4)</button>
-              <button type="button" class="tab is-active" data-page="main">Main</button>
+              <button type="button" class="tab tab-mail is-active" data-page="mail">Mail</button>
+              <button type="button" class="tab" data-page="main">Main</button>
               <button type="button" class="tab" data-page="templates">Templates</button>
             </div>
             <div class="body">
               <div class="page">
-                <div class="meta-bar">
-                  <div class="stats">
-                    <span class="stat-pill"><b>128</b><span>accounts</span></span>
-                    <span class="stat-pill"><b>12</b><span>sent</span></span>
-                    <span class="stat-pill"><b>96</b><span>verified</span></span>
-                  </div>
-                  <div class="meta-side">
+                <div class="meta-bar mail-meta">
+                  <div class="meta-side mail-identity">
                     <span class="gmail-chip" title="you@yourdomain.com">
                       <span class="gmail-chip-kicker">Private Email</span>
                       <span class="gmail-chip-addr">you@yourdomain.com</span>
@@ -142,53 +137,19 @@
                   </div>
                 </div>
                 <div class="scroll">
-                  <div class="toolbar">
-                    <button type="button" class="primary">Upload list</button>
-                    <input class="grow" placeholder="Search list…" value="" />
-                    <button type="button" class="secondary">Clear list</button>
+                  <div class="mail-page">
+                    <h3 class="section-label">Private Email sender</h3>
+                    <p class="mail-page-copy">
+                      Choose which alias ConnectV uses in the From field when sending from Private Email.
+                    </p>
+                    <div class="toolbar">
+                      <button type="button" class="primary">Reload aliases (4)</button>
+                    </div>
+                    <div class="mail-selected">
+                      <span class="mail-selected-kicker">Selected From</span>
+                      <span class="mail-selected-addr">support@yourdomain.com</span>
+                    </div>
                   </div>
-                  <div class="table-wrap">
-                    <table class="mail-table">
-                      <thead>
-                        <tr>
-                          <th class="col-check"><input type="checkbox" checked /></th>
-                          <th class="col-no">No</th>
-                          <th>Gmail</th>
-                          <th>Status</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        <tr class="mail-row">
-                          <td class="col-check"><input type="checkbox" checked /></td>
-                          <td class="col-no">1</td>
-                          <td class="col-gmail">alex@example.com</td>
-                          <td class="col-status"><span class="status-cell"><span class="verify-dot valid"></span><span class="status-label">Verified</span></span></td>
-                        </tr>
-                        <tr class="mail-row">
-                          <td class="col-check"><input type="checkbox" checked /></td>
-                          <td class="col-no">2</td>
-                          <td class="col-gmail">jamie@example.com</td>
-                          <td class="col-status"><span class="status-cell"><span class="verify-dot valid"></span><span class="status-label">Verified</span></span></td>
-                        </tr>
-                        <tr class="mail-row is-sent">
-                          <td class="col-check"><input type="checkbox" disabled /></td>
-                          <td class="col-no">3</td>
-                          <td class="col-gmail">sam@example.com</td>
-                          <td class="col-status"><span class="status-cell"><span class="verify-dot valid"></span><span class="status-label">Verified</span><span class="sent-time">Sent</span></span></td>
-                        </tr>
-                        <tr class="mail-row">
-                          <td class="col-check"><input type="checkbox" /></td>
-                          <td class="col-no">4</td>
-                          <td class="col-gmail">taylor@example.com</td>
-                          <td class="col-status"><span class="status-cell"><span class="verify-dot unknown"></span><span class="status-label">Unknown</span></span></td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-                <div class="foot">
-                  <span class="foot-note">2 selected</span>
-                  <button type="button" class="primary">Send (2)</button>
                 </div>
               </div>
             </div>
