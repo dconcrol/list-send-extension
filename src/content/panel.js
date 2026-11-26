@@ -1093,10 +1093,12 @@
         updateProgressDom();
       });
 
+      const fromPool = supportsAliases() ? selectedAliasList() : [];
+
       for (let i = 0; i < items.length; i += 1) {
         const item = items[i];
-        const fromEmail = supportsAliases() ? randomSelectedAlias() : null;
-        setSendProgress(i, items.length, fromEmail ? `${item.email} ← ${fromEmail}` : item.email);
+        const fromHint = fromPool.length ? randomSelectedAlias() : null;
+        setSendProgress(i, items.length, fromHint ? `${item.email} ← ${fromHint}` : item.email);
         updateProgressDom();
         try {
           await Mail().sendCard(
@@ -1104,14 +1106,11 @@
               toEmail: item.email,
               messageTitle: item.title,
               messageBody: item.body,
-              fromEmail
+              fromEmail: fromHint,
+              fromEmails: fromPool
             },
             (msg) => {
-              setSendProgress(
-                i,
-                items.length,
-                fromEmail ? `${item.email} ← ${fromEmail}: ${msg}` : `${item.email}: ${msg}`
-              );
+              setSendProgress(i, items.length, `${item.email}: ${msg}`);
               updateProgressDom();
             }
           );

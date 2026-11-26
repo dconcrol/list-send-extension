@@ -661,6 +661,32 @@
     }
   }
 
+  function optionMatchesWanted(el, wanted) {
+    if (!el || !wanted) return false;
+    const strict = emailFromFromOption(el);
+    if (strict && emailsMatch(strict, wanted)) return true;
+    const bits = [
+      el.getAttribute('data-email'),
+      el.getAttribute('data-value'),
+      el.value,
+      el.getAttribute('title'),
+      el.getAttribute('aria-label'),
+      el.innerText,
+      el.textContent
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+    if (!bits.includes(wanted)) return false;
+    return emailsInText(bits).some((item) => emailsMatch(item, wanted));
+  }
+
+  function findFromOptionEl(compose, wanted) {
+    const hits = fromOptionCandidates(compose).filter((el) => optionMatchesWanted(el, wanted));
+    hits.sort((a, b) => optionText(a).length - optionText(b).length);
+    return hits[0] || null;
+  }
+
   async function setFromAlias(compose, email, onProgress = () => {}) {
     const wanted = normalizeEmail(email);
     if (!wanted) throw new Error('No From alias selected.');
@@ -669,7 +695,7 @@
     onProgress(`Setting From to ${wanted}…`);
     const select = findFromSelect(compose);
     if (select) {
-      const option = [...select.options].find((opt) => emailsMatch(emailFromFromOption(opt), wanted));
+      const option = [...select.options].find((opt) => optionMatchesWanted(opt, wanted));
       if (option) {
         select.value = option.value;
         select.dispatchEvent(new Event('input', { bubbles: true }));
@@ -679,37 +705,53 @@
       }
     }
 
-    await openFromMenu(compose);
-    await sleep(250);
+    const local = wanted.split('@')[0] || wanted;
+    const searchQueries = [...new Set([local, wanted, local.slice(0, 4), local.slice(0, 6)].filter(Boolean))];
 
-    const search = findFromSearchInput(compose);
-    if (search) {
-      const local = wanted.split('@')[0] || wanted;
-      search.focus();
-      setInputValue(search, local);
-      await sleep(280);
-    }
+    for (const query of searchQueries) {
+      await openFromMenu(compose);
+      await sleep(250);
+      const search = findFromSearchInput(compose);
+      if (search) {
+        search.focus();
+        setInputValue(search, query);
+        await sleep(320);
+      }
 
-    const candidates = fromOptionCandidates(compose)
-      .map((el) => ({ el, email: emailFromFromOption(el) }))
-      .filter((item) => item.email && emailsMatch(item.email, wanted));
-    candidates.sort((a, b) => optionText(a.el).length - optionText(b.el).length);
-    const pick = candidates[0] && candidates[0].el;
-    if (!pick) {
+      let pick = findFromOptionEl(compose, wanted);
+      if (!pick) {
+        for (const menu of fromDropdownNodes(compose)) {
+          const scrollables = [menu, ...menu.querySelectorAll('div, ul, ol')].filter(
+            (el) => visible(el) && el.scrollHeight - el.clientHeight >= 24
+          );
+          for (const el of scrollables) {
+            for (let i = 0; i < 20 && !pick; i += 1) {
+              el.scrollTop = Math.min(el.scrollTop + Math.max(80, el.clientHeight - 16), el.scrollHeight);
+              await sleep(80);
+              pick = findFromOptionEl(compose, wanted);
+            }
+            el.scrollTop = 0;
+          }
+        }
+      }
+
+      if (!pick) {
+        await closeFromMenu(compose);
+        continue;
+      }
+
+      pick.scrollIntoView({ block: 'center', inline: 'nearest' });
+      clickElement(pick);
+      await sleep(300);
+      if (!emailsMatch(currentFromEmail(compose), wanted)) {
+        await trustedClick(pick);
+        await sleep(350);
+      }
       await closeFromMenu(compose);
-      throw new Error(`From alias ${wanted} was not found in Private Email.`);
+      if (emailsMatch(currentFromEmail(compose), wanted)) return true;
     }
-    clickElement(pick);
-    await sleep(300);
-    if (!emailsMatch(currentFromEmail(compose), wanted)) {
-      await trustedClick(pick);
-      await sleep(350);
-    }
-    await closeFromMenu(compose);
-    if (!emailsMatch(currentFromEmail(compose), wanted)) {
-      throw new Error(`Could not set From to ${wanted}.`);
-    }
-    return true;
+
+    throw new Error(`From alias ${wanted} was not found in Private Email.`);
   }
 
   function detectLoggedInEmail() {
@@ -1069,19 +1111,51 @@
     throw new Error('Send failed — compose is still open. Not marked as sent.');
   }
 
+  function fromPoolForCard(card) {
+    const pool = [];
+    const push = (value) => {
+      const email = normalizeEmail(value);
+      if (email && !pool.includes(email)) pool.push(email);
+    };
+    const list = card.fromEmails || card.from_emails || [];
+    if (Array.isArray(list)) list.forEach(push);
+    push(card.fromEmail || card.from_email);
+    // Shuffle so retries / random picks vary.
+    for (let i = pool.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(Math.random() * (i + 1));
+      const tmp = pool[i];
+      pool[i] = pool[j];
+      pool[j] = tmp;
+    }
+    return pool;
+  }
+
   async function sendCard(card, onProgress = () => {}) {
     const toEmail = String(card.toEmail || card.to_email || '').trim();
     const subject = card.messageTitle || card.message_title || '';
     const body = card.messageBody || card.message_body || '';
-    const fromEmail = String(card.fromEmail || card.from_email || '').trim();
+    const fromPool = fromPoolForCard(card);
     if (!toEmail) throw new Error('Card missing target email (To).');
 
     await waitUntilReady(onProgress);
     const compose = await openCompose(onProgress);
     await randDelay(300, 700);
 
-    if (fromEmail) {
-      await setFromAlias(compose, fromEmail, onProgress);
+    let usedFrom = null;
+    if (fromPool.length) {
+      let lastErr = null;
+      for (const fromEmail of fromPool) {
+        try {
+          await setFromAlias(compose, fromEmail, onProgress);
+          usedFrom = fromEmail;
+          break;
+        } catch (err) {
+          lastErr = err;
+          onProgress(`Could not use ${fromEmail}. Trying another alias…`);
+          await sleep(200);
+        }
+      }
+      if (!usedFrom) throw lastErr || new Error('No selected From alias could be applied.');
       await randDelay(200, 450);
     }
 
@@ -1101,8 +1175,8 @@
     await clickSend(compose, onProgress, priorSuccess);
     await waitForSent(compose, onProgress, priorSuccess);
     await randDelay(500, 1100);
-    onProgress('Sent in Private Email.');
-    return { ok: true, toEmail };
+    onProgress(usedFrom ? `Sent in Private Email from ${usedFrom}.` : 'Sent in Private Email.');
+    return { ok: true, toEmail, fromEmail: usedFrom };
   }
 
   async function scheduleCard() {
