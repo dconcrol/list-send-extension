@@ -1,0 +1,23 @@
+---
+description: Always bump the Chrome extension version when the app is updated
+alwaysApply: true
+---
+
+# Bump extension version on every update
+
+Whenever you change this extension’s behavior, UI, or shipped files, you must also bump `version` in `manifest.json` in the same change set.
+
+## How to bump
+
+- Use semver in `manifest.json` (`MAJOR.MINOR.PATCH`).
+- Feature or user-visible change → bump **MINOR** (e.g. `1.2.0` → `1.3.0`).
+- Bug fix or small internal fix → bump **PATCH** (e.g. `1.2.0` → `1.2.1`).
+- Breaking change → bump **MAJOR**.
+- Never leave an update on the same version that was already shipped.
+
+## Checklist before finishing
+
+1. Read the current `version` in `manifest.json`.
+2. Choose the correct semver bump for the change.
+3. Update `manifest.json` before considering the task done.
+4. If committing or pushing, include the version bump in that commit.
