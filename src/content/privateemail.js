@@ -327,30 +327,25 @@
     const selectors = [
       '[role="listbox"]',
       '[role="menu"]',
-      '[role="presentation"]',
       '.spm-dropdown',
       '.spm-select-dropdown',
       '.spm-select__menu',
       '.spm-popover',
       '.gb-dropdown',
       '.gb-select-dropdown',
-      '[data-zid*="from" i]',
-      '[data-zid*="alias" i]',
-      '[data-zid*="identity" i]',
       '.MuiMenu-list',
       '.MuiPopover-root',
-      '.MuiAutocomplete-popper',
-      '[class*="dropdown" i]',
-      '[class*="popover" i]',
-      '[class*="menu" i]'
+      '.MuiAutocomplete-popper'
     ];
     for (const root of roots) {
       for (const sel of selectors) {
         for (const el of queryAllDeep(root, sel)) {
           if (!visible(el)) continue;
           if (el.closest && el.closest('#cvlist-host')) continue;
-          const text = el.innerText || el.textContent || '';
-          if (!EMAIL_RE.test(text) && !el.querySelector('input, [role="option"], li')) continue;
+          const text = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+          if (!EMAIL_RE.test(text) && !el.querySelector('[role="option"], [role="menuitem"], li, option')) {
+            continue;
+          }
           if (nodes.includes(el)) continue;
           nodes.push(el);
         }
@@ -359,85 +354,104 @@
     return nodes;
   }
 
-  function emailsFromNode(el) {
-    if (!el) return [];
-    const bits = [
-      el.value,
-      el.getAttribute('data-value'),
-      el.getAttribute('data-email'),
-      el.getAttribute('title'),
-      el.getAttribute('aria-label'),
-      el.innerText,
-      el.textContent
-    ];
-    return emailsInText(bits.filter(Boolean).join(' '));
+  function optionText(el) {
+    if (!el) return '';
+    return String(
+      el.getAttribute('data-email') ||
+        el.getAttribute('data-value') ||
+        el.value ||
+        el.getAttribute('title') ||
+        el.getAttribute('aria-label') ||
+        el.innerText ||
+        el.textContent ||
+        ''
+    )
+      .replace(/\u200b/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
   }
 
-  function collectEmailsFromRoot(root, into) {
-    if (!root) return;
-    for (const el of root.querySelectorAll(
-      'option, [role="option"], [role="menuitem"], [role="menuitemradio"], li, button, a, label, div, span, p'
-    )) {
-      for (const email of emailsFromNode(el)) into.add(normalizeEmail(email));
+  function isUiChromeText(text) {
+    return /^(option|close|cancel|search|select|from|send|discard|save|ok|done|clear)$/i.test(
+      String(text || '').trim()
+    );
+  }
+
+  function emailFromFromOption(el) {
+    if (!el || !visible(el)) return null;
+    if (el.closest && el.closest('#cvlist-host')) return null;
+    const text = optionText(el);
+    if (!text || text.length > 140 || isUiChromeText(text)) return null;
+
+    const email = extractEmail(text);
+    if (!email) return null;
+
+    const local = email.split('@')[0] || '';
+    if (/(option|close|cancel|search|select|button|menu|dropdown)/i.test(local)) return null;
+
+    // Option row should be one address (or "Name <email>"), not mashed menu text.
+    const emails = emailsInText(text);
+    if (emails.length !== 1) return null;
+    if (!emailsMatch(emails[0], email)) return null;
+
+    const leftovers = text
+      .toLowerCase()
+      .replace(email.toLowerCase(), '')
+      .replace(/[<>()"']/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (leftovers.length > 48) return null;
+    if (/@/.test(leftovers)) return null;
+    if (/(option|close|cancel|search|select all|reload)/i.test(leftovers)) return null;
+
+    return normalizeEmail(email);
+  }
+
+  function fromOptionCandidates(compose) {
+    const candidates = [];
+    const push = (el) => {
+      if (!el || candidates.includes(el)) return;
+      candidates.push(el);
+    };
+
+    const select = findFromSelect(compose);
+    if (select) {
+      for (const opt of select.querySelectorAll('option')) push(opt);
     }
-    for (const email of emailsInText(root.innerText || root.textContent || '')) {
-      into.add(normalizeEmail(email));
+
+    for (const menu of fromDropdownNodes(compose)) {
+      for (const el of menu.querySelectorAll(
+        '[role="option"], [role="menuitem"], [role="menuitemradio"], li, button, a, label'
+      )) {
+        push(el);
+      }
     }
+    return candidates;
   }
 
   function collectFromAliases(compose) {
     const found = new Set();
-    const row = findFromRow(compose);
-    const select = findFromSelect(compose);
-    if (select) collectEmailsFromRoot(select, found);
-    if (row) collectEmailsFromRoot(row, found);
-    for (const menu of fromDropdownNodes(compose)) collectEmailsFromRoot(menu, found);
-    return [...found].filter(Boolean);
+    for (const el of fromOptionCandidates(compose)) {
+      const email = emailFromFromOption(el);
+      if (email) found.add(email);
+    }
+    return [...found];
   }
 
-  function aliasesFromPageState() {
-    const found = new Set();
-    const addFromValue = (value, depth = 0) => {
-      if (depth > 6 || value == null) return;
-      if (typeof value === 'string') {
-        for (const email of emailsInText(value)) found.add(normalizeEmail(email));
-        return;
-      }
-      if (typeof value !== 'object') return;
-      if (Array.isArray(value)) {
-        for (const item of value) addFromValue(item, depth + 1);
-        return;
-      }
-      const keys = Object.keys(value);
-      const interesting = keys.some((key) => /alias|identity|from|sender|mailbox|email/i.test(key));
-      if (!interesting && depth > 2) return;
-      for (const key of keys) {
-        if (/password|token|cookie|secret/i.test(key)) continue;
-        if (depth > 1 && !/alias|identity|from|sender|mailbox|email|address|list|items|data/i.test(key)) {
-          continue;
-        }
-        addFromValue(value[key], depth + 1);
-      }
-    };
+  function finalizeAliasList(aliases, compose) {
+    const cleaned = [
+      ...new Set((aliases || []).map(normalizeEmail).filter(Boolean))
+    ].filter((email) => {
+      if (!/^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/i.test(email)) return false;
+      const local = email.split('@')[0] || '';
+      return !/(option|close|cancel|search|select|button|menu)/i.test(local);
+    });
 
-    const globals = [
-      window.__INITIAL_STATE__,
-      window.__PRELOADED_STATE__,
-      window.__APP_STATE__,
-      window.__SPM_STATE__,
-      window.spmState,
-      window.__NEXT_DATA__
-    ];
-    for (const value of globals) addFromValue(value, 0);
-
-    for (const script of document.querySelectorAll('script[type="application/json"], script[id*="state" i]')) {
-      try {
-        addFromValue(JSON.parse(script.textContent || ''), 0);
-      } catch {
-        /* ignore */
-      }
-    }
-    return [...found].filter(Boolean);
+    const anchor = currentFromEmail(compose) || detectLoggedInEmail();
+    const domain = anchor && anchor.includes('@') ? anchor.split('@')[1] : '';
+    if (!domain) return cleaned.sort();
+    const sameDomain = cleaned.filter((email) => email.endsWith(`@${domain}`));
+    return (sameDomain.length ? sameDomain : cleaned).sort();
   }
 
   function currentFromEmail(compose) {
@@ -519,10 +533,9 @@
       collectFromAliases(compose).forEach((email) => found.add(email));
     }
 
-    const menus = fromDropdownNodes(compose);
     const scrollables = [];
-    for (const menu of menus) {
-      const nodes = [menu, ...menu.querySelectorAll('*')];
+    for (const menu of fromDropdownNodes(compose)) {
+      const nodes = [menu, ...menu.querySelectorAll('div, ul, ol, [role="listbox"]')];
       for (const el of nodes) {
         if (!visible(el)) continue;
         if (el.scrollHeight - el.clientHeight < 24) continue;
@@ -531,14 +544,13 @@
     }
 
     if (scrollables.length) {
-      onProgress('Scrolling alias list…');
+      onProgress('Scrolling From alias list…');
       for (const el of scrollables) {
         let stable = 0;
         let lastCount = found.size;
         for (let i = 0; i < 40; i += 1) {
           el.scrollTop = Math.min(el.scrollTop + Math.max(120, el.clientHeight - 20), el.scrollHeight);
           await sleep(120);
-          collectEmailsFromRoot(el, found);
           collectFromAliases(compose).forEach((email) => found.add(email));
           if (found.size === lastCount) {
             stable += 1;
@@ -552,21 +564,21 @@
       }
     }
 
-    if (search && found.size <= 1) {
-      onProgress('Probing alias search…');
+    // With many aliases Spacemail filters by search; probe only local-part starts.
+    if (search && found.size < 2) {
+      onProgress('Searching From aliases…');
       const alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789';
       for (const ch of alphabet) {
         setInputValue(search, ch);
         await sleep(180);
         collectFromAliases(compose).forEach((email) => found.add(email));
-        if (found.size >= 10) break;
       }
       setInputValue(search, '');
       await sleep(150);
       collectFromAliases(compose).forEach((email) => found.add(email));
     }
 
-    return [...found].filter(Boolean);
+    return finalizeAliasList([...found], compose);
   }
 
   function findComposeCloseButton(compose) {
@@ -608,7 +620,6 @@
 
   async function listAliases(onProgress = () => {}) {
     await waitUntilReady(onProgress);
-    const fromState = aliasesFromPageState();
     const existing = latestUsableCompose();
     let compose = existing;
     let opened = false;
@@ -617,7 +628,7 @@
       compose = await openCompose(onProgress);
       opened = true;
     } else {
-      onProgress('Reading From aliases…');
+      onProgress('Reading Private Email From aliases…');
     }
 
     try {
@@ -627,15 +638,16 @@
       await closeFromMenu(compose);
 
       const current = currentFromEmail(compose);
-      if (current) aliases.push(current);
-      aliases.push(...fromState);
-      aliases = [...new Set(aliases.map(normalizeEmail).filter(Boolean))];
+      if (current) aliases = finalizeAliasList([...aliases, current], compose);
 
       if (aliases.length <= 1) {
-        onProgress('Retrying From alias menu…');
+        onProgress('Retrying Private Email From menu…');
         await openFromMenu(compose);
         await sleep(500);
-        aliases = [...new Set([...(await harvestAliasMenu(compose, onProgress)), ...aliases, ...fromState])];
+        aliases = finalizeAliasList(
+          [...(await harvestAliasMenu(compose, onProgress)), ...aliases],
+          compose
+        );
         await closeFromMenu(compose);
       }
 
@@ -657,9 +669,7 @@
     onProgress(`Setting From to ${wanted}…`);
     const select = findFromSelect(compose);
     if (select) {
-      const option = [...select.options].find((opt) =>
-        emailsFromNode(opt).some((item) => emailsMatch(item, wanted))
-      );
+      const option = [...select.options].find((opt) => emailsMatch(emailFromFromOption(opt), wanted));
       if (option) {
         select.value = option.value;
         select.dispatchEvent(new Event('input', { bubbles: true }));
@@ -680,20 +690,11 @@
       await sleep(280);
     }
 
-    const menus = fromDropdownNodes(compose);
-    const candidates = [];
-    for (const menu of menus.length ? menus : [compose, document.body]) {
-      for (const el of queryAllDeep(
-        menu,
-        '[role="option"], [role="menuitem"], [role="menuitemradio"], li, button, a, label, div, span'
-      )) {
-        if (!visible(el)) continue;
-        if (!emailsFromNode(el).some((item) => emailsMatch(item, wanted))) continue;
-        candidates.push(el);
-      }
-    }
-    candidates.sort((a, b) => (a.innerText || '').length - (b.innerText || '').length);
-    const pick = candidates[0];
+    const candidates = fromOptionCandidates(compose)
+      .map((el) => ({ el, email: emailFromFromOption(el) }))
+      .filter((item) => item.email && emailsMatch(item.email, wanted));
+    candidates.sort((a, b) => optionText(a.el).length - optionText(b.el).length);
+    const pick = candidates[0] && candidates[0].el;
     if (!pick) {
       await closeFromMenu(compose);
       throw new Error(`From alias ${wanted} was not found in Private Email.`);
