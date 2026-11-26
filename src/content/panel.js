@@ -786,7 +786,8 @@
               type="number"
               id="sendInterval"
               min="0"
-              step="1"
+              step="0.1"
+              inputmode="decimal"
               value="${esc(String(state.sendIntervalMin ?? 0))}"
               ${state.busy ? 'disabled' : ''}
             />
@@ -830,7 +831,9 @@
   function normalizeIntervalMin(value) {
     const n = Number(value);
     if (!Number.isFinite(n) || n < 0) return DEFAULT_INTERVAL_MIN;
-    return Math.min(24 * 60, Math.floor(n));
+    // Allow decimals (e.g. 0.5 = 30s). Round to 1 decimal place.
+    const rounded = Math.round(n * 10) / 10;
+    return Math.min(24 * 60, rounded);
   }
 
   async function persistSendInterval() {
