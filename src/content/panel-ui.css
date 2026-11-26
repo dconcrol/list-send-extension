@@ -968,6 +968,7 @@ button.wide {
 .foot {
   flex: 0 0 auto;
   display: flex;
+  align-items: center;
   gap: 8px;
   padding: 10px 14px 14px;
   border-top: 1px solid var(--line);
@@ -976,7 +977,7 @@ button.wide {
 
 .foot button {
   flex: 0 0 auto;
-  min-width: 148px;
+  min-width: 120px;
   padding-left: 16px;
   padding-right: 16px;
 }
@@ -986,6 +987,33 @@ button.wide {
   min-width: 0;
   font-size: 12px;
   color: var(--muted);
+}
+
+.interval-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.interval-field input {
+  width: 56px;
+  min-width: 56px;
+  height: 34px;
+  margin: 0;
+  padding: 0 8px;
+  border-radius: 8px;
+  text-align: center;
+  font-family: ui-monospace, 'Cascadia Mono', Menlo, monospace;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .send-progress {

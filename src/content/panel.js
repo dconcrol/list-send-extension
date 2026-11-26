@@ -10,8 +10,10 @@
   const PAGE_KEY = 'cvlist.page';
   const ALIAS_KEY = 'cvlist.selectedAlias';
   const ALIASES_KEY = 'cvlist.selectedAliases';
+  const INTERVAL_KEY = 'cvlist.sendIntervalMin';
   const PAGE_SIZES = [25, 50, 100];
   const DEFAULT_PAGE_SIZE = 25;
+  const DEFAULT_INTERVAL_MIN = 0;
 
   const LOGO =
     '<svg viewBox="0 0 24 24" fill="none"><path d="M12 2.6 20.5 7v10L12 21.4 3.5 17V7L12 2.6Z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M8.6 12.3l2.4 2.4 4.6-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
@@ -45,6 +47,7 @@
     selectedAliases: new Set(),
     aliasesLoading: false,
     aliasesError: '',
+    sendIntervalMin: DEFAULT_INTERVAL_MIN,
     busy: false,
     editingTpl: null,
     sendProgress: null,
@@ -777,6 +780,18 @@
           ${renderMailTable()}
         </div>
         <div class="foot">
+          <label class="interval-field" title="Minutes to wait between each send. 0 = fast (a few seconds).">
+            <span>Every</span>
+            <input
+              type="number"
+              id="sendInterval"
+              min="0"
+              step="1"
+              value="${esc(String(state.sendIntervalMin ?? 0))}"
+              ${state.busy ? 'disabled' : ''}
+            />
+            <span>min</span>
+          </label>
           <span class="foot-note" id="selectCount"></span>
           <button type="button" class="primary" id="sendBtn">Send</button>
         </div>
@@ -799,6 +814,9 @@
     root.getElementById('clearBtn')?.addEventListener('click', () => {
       void clearList();
     });
+    root.getElementById('sendInterval')?.addEventListener('change', () => {
+      void persistSendInterval();
+    });
     root.getElementById('sendBtn')?.addEventListener('click', () => {
       void sendSelected();
     });
@@ -807,6 +825,47 @@
     wireSelection();
     syncMailTab();
     syncSendButton();
+  }
+
+  function normalizeIntervalMin(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n < 0) return DEFAULT_INTERVAL_MIN;
+    return Math.min(24 * 60, Math.floor(n));
+  }
+
+  async function persistSendInterval() {
+    const input = root.getElementById('sendInterval');
+    state.sendIntervalMin = normalizeIntervalMin(input ? input.value : state.sendIntervalMin);
+    if (input) input.value = String(state.sendIntervalMin);
+    await chrome.storage.local.set({ [INTERVAL_KEY]: state.sendIntervalMin });
+  }
+
+  function formatWaitLabel(ms) {
+    const totalSec = Math.max(0, Math.ceil(ms / 1000));
+    if (totalSec < 60) return `${totalSec}s`;
+    const mins = Math.floor(totalSec / 60);
+    const secs = totalSec % 60;
+    if (mins < 60) return secs ? `${mins}m ${secs}s` : `${mins}m`;
+    const hours = Math.floor(mins / 60);
+    const remMin = mins % 60;
+    return remMin ? `${hours}h ${remMin}m` : `${hours}h`;
+  }
+
+  async function waitBetweenSends(index, total) {
+    const minutes = normalizeIntervalMin(state.sendIntervalMin);
+    let waitMs;
+    if (minutes <= 0) {
+      waitMs = window.CVListHuman.randInt(1000, 5000);
+    } else {
+      waitMs = minutes * 60 * 1000;
+    }
+    const endsAt = Date.now() + waitMs;
+    while (Date.now() < endsAt) {
+      const left = endsAt - Date.now();
+      setSendProgress(index, total, `Next send in ${formatWaitLabel(left)}`);
+      updateProgressDom();
+      await window.CVListHuman.delay(Math.min(1000, left));
+    }
   }
 
   function skipSummary(parsed, storedSkip) {
@@ -995,6 +1054,7 @@
     if (state.busy) return;
     const chosen = selectedSendable();
     refreshGmailIdentity();
+    await persistSendInterval();
     if (!chosen.length) {
       toast('err', 'Nothing selected', 'Select unsent addresses with valid or unknown status.');
       return;
@@ -1061,11 +1121,7 @@
           patchMailCards();
           syncSendButton();
           if (i + 1 < items.length) {
-            const waitMs = window.CVListHuman.randInt(1000, 5000);
-            const seconds = (waitMs / 1000).toFixed(1).replace(/\.0$/, '');
-            setSendProgress(i + 1, items.length, `Next send in ${seconds}s`);
-            updateProgressDom();
-            await window.CVListHuman.delay(waitMs);
+            await waitBetweenSends(i + 1, items.length);
           }
         } catch (err) {
           toast('err', 'Send failed', err.message || 'Send failed.');
@@ -1271,7 +1327,13 @@
     } catch (err) {
       state.error = err.message;
     }
-    const stored = await chrome.storage.local.get([COLLAPSED_KEY, PAGE_KEY, ALIAS_KEY, ALIASES_KEY]);
+    const stored = await chrome.storage.local.get([
+      COLLAPSED_KEY,
+      PAGE_KEY,
+      ALIAS_KEY,
+      ALIASES_KEY,
+      INTERVAL_KEY
+    ]);
     const savedPage = stored[PAGE_KEY];
     if (savedPage === 'templates') state.page = 'templates';
     else if (savedPage === 'mail' && supportsAliases()) state.page = 'mail';
@@ -1284,6 +1346,7 @@
     state.selectedAliases = new Set(
       savedAliases.map((email) => String(email || '').toLowerCase()).filter(Boolean)
     );
+    state.sendIntervalMin = normalizeIntervalMin(stored[INTERVAL_KEY]);
     setCollapsed(Boolean(stored[COLLAPSED_KEY]));
     refreshGmailIdentity();
     startTimers();
