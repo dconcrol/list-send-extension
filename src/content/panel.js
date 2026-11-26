@@ -9,6 +9,7 @@
   const COLLAPSED_KEY = 'cvlist.collapsed';
   const PAGE_KEY = 'cvlist.page';
   const ALIAS_KEY = 'cvlist.selectedAlias';
+  const ALIASES_KEY = 'cvlist.selectedAliases';
   const PAGE_SIZES = [25, 50, 100];
   const DEFAULT_PAGE_SIZE = 25;
 
@@ -41,7 +42,7 @@
     gmailEmail: null,
     gmailReady: false,
     aliases: [],
-    selectedAlias: null,
+    selectedAliases: new Set(),
     aliasesLoading: false,
     aliasesError: '',
     busy: false,
@@ -200,28 +201,60 @@
     </span>`;
   }
 
-  function aliasSelectHtml() {
+  function selectedAliasList() {
+    return [...state.selectedAliases].filter((email) => state.aliases.includes(email));
+  }
+
+  function randomSelectedAlias() {
+    const list = selectedAliasList();
+    if (!list.length) return null;
+    const Human = window.CVListHuman;
+    if (Human && typeof Human.randInt === 'function') {
+      return list[Human.randInt(0, list.length - 1)];
+    }
+    return list[Math.floor(Math.random() * list.length)];
+  }
+
+  function aliasListHtml() {
     const aliases = state.aliases || [];
-    const selected = state.selectedAlias || '';
     const loading = state.aliasesLoading;
-    const options = aliases.length
-      ? aliases
-          .map(
-            (email) =>
-              `<option value="${esc(email)}"${email === selected ? ' selected' : ''}>${esc(email)}</option>`
-          )
-          .join('')
-      : `<option value="">${loading ? 'Loading aliases…' : 'Load aliases to choose From'}</option>`;
     const err = state.aliasesError
       ? `<span class="alias-err" title="${esc(state.aliasesError)}">${esc(state.aliasesError)}</span>`
       : '';
-    const count =
-      aliases.length > 0 ? `<span class="alias-count">${aliases.length} loaded</span>` : '';
+    if (!aliases.length) {
+      return `
+        <div class="alias-bar" id="aliasBar">
+          <div class="alias-empty">${loading ? 'Loading aliases…' : 'Load aliases to see and select From addresses.'}</div>
+          ${err}
+        </div>`;
+    }
+    const selectedCount = selectedAliasList().length;
+    const rows = aliases
+      .map((email) => {
+        const checked = state.selectedAliases.has(email);
+        return `<label class="alias-row">
+          <input type="checkbox" class="alias-check" data-alias="${esc(email)}" ${
+            checked ? 'checked' : ''
+          } ${loading || state.busy ? 'disabled' : ''} />
+          <span class="alias-row-email">${esc(email)}</span>
+        </label>`;
+      })
+      .join('');
     return `
       <div class="alias-bar" id="aliasBar">
-        <label class="alias-label" for="aliasSelect">From alias</label>
-        <select id="aliasSelect" ${loading || state.busy || !aliases.length ? 'disabled' : ''}>${options}</select>
-        ${count}
+        <div class="alias-bar-head">
+          <span class="alias-label">From aliases</span>
+          <span class="alias-count">${selectedCount} selected · ${aliases.length} loaded</span>
+        </div>
+        <div class="alias-actions">
+          <button type="button" class="secondary" id="aliasSelectAll" ${
+            loading || state.busy ? 'disabled' : ''
+          }>Select all</button>
+          <button type="button" class="secondary" id="aliasClearAll" ${
+            loading || state.busy ? 'disabled' : ''
+          }>Clear</button>
+        </div>
+        <div class="alias-list">${rows}</div>
         ${err}
       </div>`;
   }
@@ -246,22 +279,60 @@
     if (addr) addr.textContent = state.gmailEmail || 'Not detected';
   }
 
-  async function persistSelectedAlias(email) {
-    state.selectedAlias = email || null;
-    await chrome.storage.local.set({ [ALIAS_KEY]: state.selectedAlias || '' });
+  async function persistSelectedAliases() {
+    const list = selectedAliasList();
+    await chrome.storage.local.set({
+      [ALIASES_KEY]: list,
+      [ALIAS_KEY]: list[0] || ''
+    });
+  }
+
+  function updateMailSelectionSummary() {
+    const summary = root.querySelector('.mail-selected-addr');
+    if (!summary) return;
+    const list = selectedAliasList();
+    if (!list.length) {
+      summary.textContent = 'None selected';
+      return;
+    }
+    if (list.length === 1) {
+      summary.textContent = list[0];
+      return;
+    }
+    summary.textContent = `${list.length} aliases (random per send)`;
   }
 
   function wireAliasControls() {
-    const select = root.getElementById('aliasSelect');
-    if (select) {
-      select.addEventListener('change', () => {
-        void persistSelectedAlias(select.value || '').then(() => {
-          const selected = root.querySelector('.mail-selected-addr');
-          if (selected) selected.textContent = state.selectedAlias || 'Not selected';
+    root.querySelectorAll('.alias-check').forEach((box) => {
+      box.addEventListener('change', () => {
+        const email = String(box.dataset.alias || '').toLowerCase();
+        if (!email) return;
+        if (box.checked) state.selectedAliases.add(email);
+        else state.selectedAliases.delete(email);
+        void persistSelectedAliases().then(() => {
+          updateMailSelectionSummary();
+          const count = root.querySelector('.alias-count');
+          if (count) {
+            count.textContent = `${selectedAliasList().length} selected · ${state.aliases.length} loaded`;
+          }
           syncSendButton();
         });
       });
-    }
+    });
+    root.getElementById('aliasSelectAll')?.addEventListener('click', () => {
+      state.aliases.forEach((email) => state.selectedAliases.add(email));
+      void persistSelectedAliases().then(() => {
+        refreshMailPageDom();
+        syncSendButton();
+      });
+    });
+    root.getElementById('aliasClearAll')?.addEventListener('click', () => {
+      state.selectedAliases.clear();
+      void persistSelectedAliases().then(() => {
+        refreshMailPageDom();
+        syncSendButton();
+      });
+    });
   }
 
   function refreshMailPageDom() {
@@ -270,9 +341,10 @@
     if (chip) chip.textContent = state.gmailEmail || 'Not detected';
     const bar = root.getElementById('aliasBar');
     if (bar) {
-      bar.outerHTML = aliasSelectHtml();
+      bar.outerHTML = aliasListHtml();
       wireAliasControls();
     }
+    updateMailSelectionSummary();
     const loadBtn = root.getElementById('aliasLoadBtn');
     if (loadBtn) {
       loadBtn.disabled = state.busy || state.aliasesLoading || !state.gmailReady;
@@ -292,7 +364,7 @@
       return;
     }
     if (state.aliasesLoading) return;
-    if (!force && state.aliases.length && state.selectedAlias) return;
+    if (!force && state.aliases.length && selectedAliasList().length) return;
     if (!state.gmailReady && !force) return;
 
     state.aliasesLoading = true;
@@ -313,18 +385,21 @@
       } else {
         state.aliasesError = '';
       }
-      if (state.selectedAlias && !state.aliases.includes(state.selectedAlias)) {
-        state.selectedAlias = state.aliases[0] || null;
-        await chrome.storage.local.set({ [ALIAS_KEY]: state.selectedAlias || '' });
-      } else if (!state.selectedAlias && state.aliases.length) {
-        state.selectedAlias = state.aliases[0];
-        await chrome.storage.local.set({ [ALIAS_KEY]: state.selectedAlias });
+
+      const next = new Set();
+      for (const email of state.selectedAliases) {
+        if (state.aliases.includes(email)) next.add(email);
       }
+      if (!next.size && state.aliases.length) {
+        state.aliases.forEach((email) => next.add(email));
+      }
+      state.selectedAliases = next;
+      await persistSelectedAliases();
       refreshMailPageDom();
       toast(
         state.aliases.length > 1 ? 'ok' : 'err',
         state.aliases.length ? `Loaded ${state.aliases.length} aliases` : 'Aliases not found',
-        state.aliasesError || state.selectedAlias || ''
+        state.aliasesError || `${selectedAliasList().length} selected`
       );
     } catch (err) {
       state.aliasesError = err.message || 'Could not load aliases.';
@@ -611,20 +686,24 @@
 
   function renderMailPage() {
     refreshGmailIdentity();
-    const selected = state.selectedAlias || 'Not selected';
+    const selected = selectedAliasList();
+    const selectedLabel = !selected.length
+      ? 'None selected'
+      : selected.length === 1
+        ? selected[0]
+        : `${selected.length} aliases (random per send)`;
     body.innerHTML = `
       <div class="page">
         <div class="meta-bar mail-meta">
           <div class="meta-side mail-identity">
             ${gmailChipHtml()}
-            ${aliasSelectHtml()}
           </div>
         </div>
         <div class="scroll">
           <div class="mail-page">
             <h3 class="section-label">Private Email sender</h3>
             <p class="mail-page-copy">
-              Choose which alias ConnectV uses in the From field when sending from Private Email.
+              Select one or more aliases. Each message is sent from a random selected alias.
             </p>
             <div class="toolbar">
               <button type="button" class="primary" id="aliasLoadBtn" ${
@@ -639,9 +718,10 @@
                 }
               </button>
             </div>
+            ${aliasListHtml()}
             <div class="mail-selected">
-              <span class="mail-selected-kicker">Selected From</span>
-              <span class="mail-selected-addr">${esc(selected)}</span>
+              <span class="mail-selected-kicker">Selected From pool</span>
+              <span class="mail-selected-addr">${esc(selectedLabel)}</span>
             </div>
           </div>
         </div>
@@ -656,16 +736,21 @@
 
   function renderMain() {
     refreshGmailIdentity();
+    const selected = selectedAliasList();
+    const aliasChip =
+      supportsAliases() && selected.length
+        ? `<span class="gmail-chip" title="${esc(selected.join(', '))}">
+            <span class="gmail-chip-kicker">From pool</span>
+            <span class="gmail-chip-addr">${esc(
+              selected.length === 1 ? selected[0] : `${selected.length} aliases · random`
+            )}</span>
+          </span>`
+        : '';
     body.innerHTML = `
       <div class="page">
         <div class="meta-bar">
           ${statsHtml()}
-          ${supportsAliases() && state.selectedAlias
-            ? `<span class="gmail-chip" title="${esc(state.selectedAlias)}">
-                <span class="gmail-chip-kicker">From alias</span>
-                <span class="gmail-chip-addr">${esc(state.selectedAlias)}</span>
-              </span>`
-            : ''}
+          ${aliasChip}
         </div>
         <div class="scroll">
           <div class="toolbar">
@@ -871,7 +956,7 @@
     const count = selectedSendable().length;
     if (state.busy) return 'Sending…';
     if (!state.gmailReady) return `${mailPlatform()} loading…`;
-    if (supportsAliases() && !state.selectedAlias) return 'Open Mail tab';
+    if (supportsAliases() && !selectedAliasList().length) return 'Open Mail tab';
     return count ? `Send (${count})` : 'Send';
   }
 
@@ -879,10 +964,11 @@
     const btn = root.getElementById('sendBtn');
     const note = root.getElementById('selectCount');
     const count = selectedSendable().length;
-    const aliasOk = !supportsAliases() || Boolean(state.selectedAlias);
+    const aliasOk = !supportsAliases() || selectedAliasList().length > 0;
     if (note) {
-      if (supportsAliases() && !state.selectedAlias) note.textContent = 'Open Mail tab and pick a From alias';
-      else note.textContent = count ? `${count} selected` : 'Select addresses to send';
+      if (supportsAliases() && !selectedAliasList().length) {
+        note.textContent = 'Open Mail tab and select From aliases';
+      } else note.textContent = count ? `${count} selected` : 'Select addresses to send';
     }
     if (!btn) return;
     btn.disabled = state.busy || !state.gmailReady || !count || !aliasOk;
@@ -901,8 +987,8 @@
       toast('err', `${mailPlatform()} still loading`, 'Wait until the inbox is ready.');
       return;
     }
-    if (supportsAliases() && !state.selectedAlias) {
-      toast('err', 'Pick a From alias', 'Open the Mail tab, load aliases, and choose From.');
+    if (supportsAliases() && !selectedAliasList().length) {
+      toast('err', 'Select From aliases', 'Open the Mail tab, load aliases, and check one or more.');
       return;
     }
 
@@ -928,11 +1014,10 @@
         updateProgressDom();
       });
 
-      const fromEmail = supportsAliases() ? state.selectedAlias : null;
-
       for (let i = 0; i < items.length; i += 1) {
         const item = items[i];
-        setSendProgress(i, items.length, item.email);
+        const fromEmail = supportsAliases() ? randomSelectedAlias() : null;
+        setSendProgress(i, items.length, fromEmail ? `${item.email} ← ${fromEmail}` : item.email);
         updateProgressDom();
         try {
           await Mail().sendCard(
@@ -943,7 +1028,11 @@
               fromEmail
             },
             (msg) => {
-              setSendProgress(i, items.length, `${item.email}: ${msg}`);
+              setSendProgress(
+                i,
+                items.length,
+                fromEmail ? `${item.email} ← ${fromEmail}: ${msg}` : `${item.email}: ${msg}`
+              );
               updateProgressDom();
             }
           );
@@ -1165,12 +1254,19 @@
     } catch (err) {
       state.error = err.message;
     }
-    const stored = await chrome.storage.local.get([COLLAPSED_KEY, PAGE_KEY, ALIAS_KEY]);
+    const stored = await chrome.storage.local.get([COLLAPSED_KEY, PAGE_KEY, ALIAS_KEY, ALIASES_KEY]);
     const savedPage = stored[PAGE_KEY];
     if (savedPage === 'templates') state.page = 'templates';
     else if (savedPage === 'mail' && supportsAliases()) state.page = 'mail';
     else state.page = 'main';
-    state.selectedAlias = stored[ALIAS_KEY] ? String(stored[ALIAS_KEY]).toLowerCase() : null;
+    const savedAliases = Array.isArray(stored[ALIASES_KEY])
+      ? stored[ALIASES_KEY]
+      : stored[ALIAS_KEY]
+        ? [stored[ALIAS_KEY]]
+        : [];
+    state.selectedAliases = new Set(
+      savedAliases.map((email) => String(email || '').toLowerCase()).filter(Boolean)
+    );
     setCollapsed(Boolean(stored[COLLAPSED_KEY]));
     refreshGmailIdentity();
     startTimers();

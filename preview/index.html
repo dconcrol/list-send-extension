@@ -63,7 +63,7 @@
           This is a local preview of the ConnectV side panel after the v1.2.0 update, including the
           new <strong>From alias</strong> selector on the Main tab.
         </p>
-        <span class="badge">manifest version 1.4.0</span>
+        <span class="badge">manifest version 1.5.0</span>
       </div>
       <div id="cvlist-host"></div>
     </div>
@@ -124,30 +124,36 @@
                       <span class="gmail-chip-kicker">Private Email</span>
                       <span class="gmail-chip-addr">you@yourdomain.com</span>
                     </span>
-                    <div class="alias-bar">
-                      <label class="alias-label" for="aliasSelect">From alias</label>
-                      <select id="aliasSelect">
-                        <option>sales@yourdomain.com</option>
-                        <option selected>support@yourdomain.com</option>
-                        <option>hello@yourdomain.com</option>
-                        <option>billing@yourdomain.com</option>
-                      </select>
-                      <span class="alias-count">4 loaded</span>
-                    </div>
                   </div>
                 </div>
                 <div class="scroll">
                   <div class="mail-page">
                     <h3 class="section-label">Private Email sender</h3>
                     <p class="mail-page-copy">
-                      Choose which alias ConnectV uses in the From field when sending from Private Email.
+                      Select one or more aliases. Each message is sent from a random selected alias.
                     </p>
                     <div class="toolbar">
                       <button type="button" class="primary">Reload aliases (4)</button>
                     </div>
+                    <div class="alias-bar">
+                      <div class="alias-bar-head">
+                        <span class="alias-label">From aliases</span>
+                        <span class="alias-count">3 selected · 4 loaded</span>
+                      </div>
+                      <div class="alias-actions">
+                        <button type="button" class="secondary">Select all</button>
+                        <button type="button" class="secondary">Clear</button>
+                      </div>
+                      <div class="alias-list">
+                        <label class="alias-row"><input type="checkbox" checked /><span class="alias-row-email">sales@yourdomain.com</span></label>
+                        <label class="alias-row"><input type="checkbox" checked /><span class="alias-row-email">support@yourdomain.com</span></label>
+                        <label class="alias-row"><input type="checkbox" checked /><span class="alias-row-email">hello@yourdomain.com</span></label>
+                        <label class="alias-row"><input type="checkbox" /><span class="alias-row-email">billing@yourdomain.com</span></label>
+                      </div>
+                    </div>
                     <div class="mail-selected">
-                      <span class="mail-selected-kicker">Selected From</span>
-                      <span class="mail-selected-addr">support@yourdomain.com</span>
+                      <span class="mail-selected-kicker">Selected From pool</span>
+                      <span class="mail-selected-addr">3 aliases (random per send)</span>
                     </div>
                   </div>
                 </div>
