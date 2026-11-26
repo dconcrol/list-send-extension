@@ -117,6 +117,7 @@
         </div>
       </div>
       <div class="tabs" id="tabs">
+        <button type="button" class="tab tab-alias" id="aliasLoadBtn" hidden title="Load Private Email From aliases">Aliases</button>
         <button type="button" class="tab" data-page="main">Main</button>
         <button type="button" class="tab" data-page="templates">Templates</button>
       </div>
@@ -152,6 +153,11 @@
   launcher.addEventListener('click', () => setCollapsed(false));
 
   root.getElementById('tabs').addEventListener('click', (event) => {
+    const aliasBtn = event.target.closest('#aliasLoadBtn');
+    if (aliasBtn) {
+      void refreshAliases({ force: true });
+      return;
+    }
     const btn = event.target.closest('[data-page]');
     if (!btn) return;
     state.page = btn.dataset.page;
@@ -206,19 +212,36 @@
               `<option value="${esc(email)}"${email === selected ? ' selected' : ''}>${esc(email)}</option>`
           )
           .join('')
-      : `<option value="">${loading ? 'Loading aliases…' : 'No aliases yet'}</option>`;
+      : `<option value="">${
+          loading ? 'Loading aliases…' : 'Click Aliases left of Main'
+        }</option>`;
     const err = state.aliasesError
       ? `<span class="alias-err" title="${esc(state.aliasesError)}">${esc(state.aliasesError)}</span>`
       : '';
+    const count =
+      aliases.length > 0
+        ? `<span class="alias-count">${aliases.length} loaded</span>`
+        : '';
     return `
       <div class="alias-bar" id="aliasBar">
         <label class="alias-label" for="aliasSelect">From alias</label>
-        <select id="aliasSelect" ${loading || state.busy ? 'disabled' : ''}>${options}</select>
-        <button type="button" class="secondary alias-refresh" id="aliasRefresh" ${
-          loading || state.busy ? 'disabled' : ''
-        } title="Refresh aliases">↻</button>
+        <select id="aliasSelect" ${loading || state.busy || !aliases.length ? 'disabled' : ''}>${options}</select>
+        ${count}
         ${err}
       </div>`;
+  }
+
+  function syncAliasLoadButton() {
+    const btn = root.getElementById('aliasLoadBtn');
+    if (!btn) return;
+    const show = supportsAliases();
+    btn.hidden = !show;
+    if (!show) return;
+    btn.disabled = state.busy || state.aliasesLoading || !state.gmailReady;
+    if (state.aliasesLoading) btn.textContent = 'Loading…';
+    else if (state.aliases.length) btn.textContent = `Aliases (${state.aliases.length})`;
+    else btn.textContent = 'Aliases';
+    btn.classList.toggle('is-busy', state.aliasesLoading);
   }
 
   function applyGmailChip() {
@@ -239,15 +262,13 @@
         syncSendButton();
       });
     }
-    root.getElementById('aliasRefresh')?.addEventListener('click', () => {
-      void refreshAliases({ force: true });
-    });
   }
 
   async function refreshAliases({ force = false } = {}) {
     if (!supportsAliases()) {
       state.aliases = [];
       state.aliasesError = '';
+      syncAliasLoadButton();
       return;
     }
     if (state.aliasesLoading) return;
@@ -256,18 +277,23 @@
 
     state.aliasesLoading = true;
     state.aliasesError = '';
+    syncAliasLoadButton();
     const select = root.getElementById('aliasSelect');
-    const refreshBtn = root.getElementById('aliasRefresh');
     if (select) select.disabled = true;
-    if (refreshBtn) refreshBtn.disabled = true;
 
     try {
       const aliases = await Mail().listAliases((msg) => {
         state.status = msg;
+        const btn = root.getElementById('aliasLoadBtn');
+        if (btn && state.aliasesLoading) btn.title = msg;
       });
       state.aliases = (aliases || []).map((item) => String(item).toLowerCase()).filter(Boolean);
       if (!state.aliases.length) {
-        state.aliasesError = 'No aliases detected. Open compose once, then refresh.';
+        state.aliasesError = 'No aliases detected. Keep Private Email open, then press Aliases again.';
+      } else if (state.aliases.length === 1) {
+        state.aliasesError = 'Only 1 address found. Open Compose, click From, then press Aliases again.';
+      } else {
+        state.aliasesError = '';
       }
       if (state.selectedAlias && !state.aliases.includes(state.selectedAlias)) {
         state.selectedAlias = state.aliases[0] || null;
@@ -281,6 +307,11 @@
         bar.outerHTML = aliasSelectHtml();
         wireAliasControls();
       }
+      toast(
+        state.aliases.length > 1 ? 'ok' : 'err',
+        state.aliases.length ? `Loaded ${state.aliases.length} aliases` : 'Aliases not found',
+        state.aliasesError || state.selectedAlias || ''
+      );
     } catch (err) {
       state.aliasesError = err.message || 'Could not load aliases.';
       const bar = root.getElementById('aliasBar');
@@ -288,8 +319,10 @@
         bar.outerHTML = aliasSelectHtml();
         wireAliasControls();
       }
+      toast('err', 'Alias load failed', state.aliasesError);
     } finally {
       state.aliasesLoading = false;
+      syncAliasLoadButton();
       syncSendButton();
     }
   }
@@ -618,10 +651,8 @@
     wireAliasControls();
     wireMailPager();
     wireSelection();
+    syncAliasLoadButton();
     syncSendButton();
-    if (supportsAliases() && state.gmailReady && !state.aliases.length && !state.aliasesLoading) {
-      void refreshAliases();
-    }
   }
 
   function skipSummary(parsed, storedSkip) {
@@ -904,9 +935,10 @@
   }
 
   function paintTabs() {
-    root.querySelectorAll('.tab').forEach((tab) => {
+    root.querySelectorAll('.tab[data-page]').forEach((tab) => {
       tab.classList.toggle('is-active', tab.dataset.page === state.page);
     });
+    syncAliasLoadButton();
   }
 
   function render() {
@@ -1005,9 +1037,9 @@
       const next = Mail().isGmailPageReady();
       if (prev === next) return;
       state.gmailReady = next;
-      if (!state.busy) syncSendButton();
-      if (next && supportsAliases() && !state.aliases.length && !state.aliasesLoading) {
-        void refreshAliases();
+      if (!state.busy) {
+        syncAliasLoadButton();
+        syncSendButton();
       }
     }, 400);
   }
@@ -1078,7 +1110,6 @@
     startTimers();
     keepServiceWorkerAlive();
     render();
-    if (supportsAliases() && state.gmailReady) void refreshAliases();
   }
 
   mount();

@@ -255,29 +255,70 @@
   }
 
   function findFromRow(compose) {
-    return findHeaderRow(compose, /^from:?$/i);
-  }
-
-  function findFromSelect(compose) {
-    const row = findFromRow(compose);
-    if (!row) return null;
     return (
-      row.querySelector('select[name="from"], select#from, select[data-zid*="from" i]') ||
-      row.querySelector('select') ||
+      findHeaderRow(compose, /^from:?$/i) ||
+      compose.querySelector(
+        '[data-zid*="from" i], [data-zid*="sender" i], [data-zid*="identity" i], .spm-compose__from, .spm-from'
+      ) ||
       null
     );
   }
 
+  function findFromSelect(compose) {
+    const row = findFromRow(compose);
+    const roots = [row, compose].filter(Boolean);
+    for (const root of roots) {
+      const select =
+        root.querySelector('select[name="from"], select#from, select[data-zid*="from" i]') ||
+        root.querySelector('select');
+      if (select) return select;
+    }
+    return null;
+  }
+
   function findFromTrigger(compose) {
     const row = findFromRow(compose);
-    if (!row) return null;
-    return (
-      row.querySelector(
-        '[data-zid*="from" i], [aria-haspopup="listbox"], [aria-haspopup="menu"], .spm-select, .gb-select, button, [role="button"], [role="combobox"]'
-      ) ||
-      row.querySelector('.spm-compose__header-item-value, .spm-field-value') ||
-      row
-    );
+    const candidates = [];
+    const push = (el) => {
+      if (el && visible(el) && !candidates.includes(el)) candidates.push(el);
+    };
+    if (row) {
+      push(
+        row.querySelector(
+          '[data-zid*="from" i], [aria-haspopup="listbox"], [aria-haspopup="menu"], [aria-haspopup="true"], .spm-select, .gb-select, button, [role="button"], [role="combobox"]'
+        )
+      );
+      push(row.querySelector('.spm-compose__header-item-value, .spm-field-value, .spm-select__value'));
+      for (const el of row.querySelectorAll('button, [role="button"], [role="combobox"], a, span, div')) {
+        if (extractEmail(el.innerText || el.textContent || el.getAttribute('title') || '')) push(el);
+      }
+      push(row);
+    }
+    for (const el of compose.querySelectorAll(
+      '[data-zid*="from" i], [data-zid*="sender" i], [aria-haspopup="listbox"], [role="combobox"]'
+    )) {
+      push(el);
+    }
+    for (const el of compose.querySelectorAll('button, [role="button"], [role="combobox"], span, div')) {
+      const text = (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+      if (!extractEmail(text)) continue;
+      if (text.length > 120) continue;
+      push(el);
+    }
+    candidates.sort((a, b) => {
+      const score = (el) => {
+        const zid = (el.getAttribute('data-zid') || '').toLowerCase();
+        const hasPopup = el.getAttribute('aria-haspopup');
+        return (
+          (zid.includes('from') || zid.includes('sender') || zid.includes('identity') ? 8 : 0) +
+          (hasPopup ? 4 : 0) +
+          (el.tagName === 'BUTTON' || el.getAttribute('role') === 'button' ? 2 : 0) +
+          (extractEmail(el.innerText || '') ? 1 : 0)
+        );
+      };
+      return score(b) - score(a);
+    });
+    return candidates[0] || null;
   }
 
   function fromDropdownNodes(compose) {
@@ -286,18 +327,30 @@
     const selectors = [
       '[role="listbox"]',
       '[role="menu"]',
+      '[role="presentation"]',
       '.spm-dropdown',
       '.spm-select-dropdown',
-      '.gb-dropdown',
+      '.spm-select__menu',
       '.spm-popover',
-      '[data-zid*="from" i][role]',
+      '.gb-dropdown',
+      '.gb-select-dropdown',
+      '[data-zid*="from" i]',
+      '[data-zid*="alias" i]',
+      '[data-zid*="identity" i]',
       '.MuiMenu-list',
-      '.MuiPopover-root'
+      '.MuiPopover-root',
+      '.MuiAutocomplete-popper',
+      '[class*="dropdown" i]',
+      '[class*="popover" i]',
+      '[class*="menu" i]'
     ];
     for (const root of roots) {
       for (const sel of selectors) {
         for (const el of queryAllDeep(root, sel)) {
           if (!visible(el)) continue;
+          if (el.closest && el.closest('#cvlist-host')) continue;
+          const text = el.innerText || el.textContent || '';
+          if (!EMAIL_RE.test(text) && !el.querySelector('input, [role="option"], li')) continue;
           if (nodes.includes(el)) continue;
           nodes.push(el);
         }
@@ -320,30 +373,71 @@
     return emailsInText(bits.filter(Boolean).join(' '));
   }
 
+  function collectEmailsFromRoot(root, into) {
+    if (!root) return;
+    for (const el of root.querySelectorAll(
+      'option, [role="option"], [role="menuitem"], [role="menuitemradio"], li, button, a, label, div, span, p'
+    )) {
+      for (const email of emailsFromNode(el)) into.add(normalizeEmail(email));
+    }
+    for (const email of emailsInText(root.innerText || root.textContent || '')) {
+      into.add(normalizeEmail(email));
+    }
+  }
+
   function collectFromAliases(compose) {
     const found = new Set();
     const row = findFromRow(compose);
     const select = findFromSelect(compose);
-    if (select) {
-      for (const opt of select.querySelectorAll('option')) {
-        for (const email of emailsFromNode(opt)) found.add(email);
+    if (select) collectEmailsFromRoot(select, found);
+    if (row) collectEmailsFromRoot(row, found);
+    for (const menu of fromDropdownNodes(compose)) collectEmailsFromRoot(menu, found);
+    return [...found].filter(Boolean);
+  }
+
+  function aliasesFromPageState() {
+    const found = new Set();
+    const addFromValue = (value, depth = 0) => {
+      if (depth > 6 || value == null) return;
+      if (typeof value === 'string') {
+        for (const email of emailsInText(value)) found.add(normalizeEmail(email));
+        return;
+      }
+      if (typeof value !== 'object') return;
+      if (Array.isArray(value)) {
+        for (const item of value) addFromValue(item, depth + 1);
+        return;
+      }
+      const keys = Object.keys(value);
+      const interesting = keys.some((key) => /alias|identity|from|sender|mailbox|email/i.test(key));
+      if (!interesting && depth > 2) return;
+      for (const key of keys) {
+        if (/password|token|cookie|secret/i.test(key)) continue;
+        if (depth > 1 && !/alias|identity|from|sender|mailbox|email|address|list|items|data/i.test(key)) {
+          continue;
+        }
+        addFromValue(value[key], depth + 1);
+      }
+    };
+
+    const globals = [
+      window.__INITIAL_STATE__,
+      window.__PRELOADED_STATE__,
+      window.__APP_STATE__,
+      window.__SPM_STATE__,
+      window.spmState,
+      window.__NEXT_DATA__
+    ];
+    for (const value of globals) addFromValue(value, 0);
+
+    for (const script of document.querySelectorAll('script[type="application/json"], script[id*="state" i]')) {
+      try {
+        addFromValue(JSON.parse(script.textContent || ''), 0);
+      } catch {
+        /* ignore */
       }
     }
-    if (row) {
-      for (const email of emailsInText(row.innerText || row.textContent || '')) found.add(email);
-      for (const el of row.querySelectorAll('[data-email], [title], [aria-label], option, li, [role="option"]')) {
-        for (const email of emailsFromNode(el)) found.add(email);
-      }
-    }
-    for (const menu of fromDropdownNodes(compose)) {
-      for (const el of menu.querySelectorAll(
-        '[role="option"], [role="menuitem"], [role="menuitemradio"], li, button, a, label, div, span'
-      )) {
-        for (const email of emailsFromNode(el)) found.add(email);
-      }
-      for (const email of emailsInText(menu.innerText || menu.textContent || '')) found.add(email);
-    }
-    return [...found];
+    return [...found].filter(Boolean);
   }
 
   function currentFromEmail(compose) {
@@ -352,26 +446,52 @@
       const opt = select.selectedOptions && select.selectedOptions[0];
       return extractEmail((opt && (opt.value || opt.textContent)) || select.value) || null;
     }
+    const trigger = findFromTrigger(compose);
+    if (trigger) {
+      const email = extractEmail(
+        `${trigger.innerText || ''} ${trigger.getAttribute('title') || ''} ${trigger.getAttribute('aria-label') || ''}`
+      );
+      if (email) return email;
+    }
     const row = findFromRow(compose);
     return extractEmail(row && (row.innerText || row.textContent)) || null;
+  }
+
+  function findFromSearchInput(compose) {
+    for (const menu of fromDropdownNodes(compose)) {
+      const input =
+        menu.querySelector(
+          'input[type="search"], input[type="text"], input:not([type]), [contenteditable="true"]'
+        ) || null;
+      if (input && visible(input)) return input;
+    }
+    const inputs = queryAllDeep(document, 'input[type="search"], input[placeholder*="search" i], input[placeholder*="alias" i]');
+    return inputs.find((el) => visible(el) && !el.closest('#cvlist-host')) || null;
   }
 
   async function openFromMenu(compose) {
     const select = findFromSelect(compose);
     if (select) {
       select.focus();
-      select.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      select.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
       select.click();
-      await sleep(150);
+      await sleep(200);
       return select;
     }
     const trigger = findFromTrigger(compose);
     if (!trigger) return null;
+    trigger.scrollIntoView({ block: 'center', inline: 'nearest' });
     clickElement(trigger);
-    await sleep(250);
+    await sleep(350);
     if (!fromDropdownNodes(compose).length) {
       await trustedClick(trigger);
-      await sleep(300);
+      await sleep(450);
+    }
+    if (!fromDropdownNodes(compose).length) {
+      trigger.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+      trigger.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+      trigger.click();
+      await sleep(400);
     }
     return trigger;
   }
@@ -380,12 +500,73 @@
     const active = document.activeElement;
     if (active && typeof active.blur === 'function') active.blur();
     pressKey(document.body, 'Escape');
-    await sleep(120);
-    const menus = fromDropdownNodes(compose);
-    for (const menu of menus) {
+    await sleep(150);
+    for (const menu of fromDropdownNodes(compose)) {
       if (!visible(menu)) continue;
       pressKey(menu, 'Escape');
     }
+    await sleep(100);
+  }
+
+  async function harvestAliasMenu(compose, onProgress = () => {}) {
+    const found = new Set(collectFromAliases(compose));
+    const search = findFromSearchInput(compose);
+    if (search) {
+      onProgress('Clearing alias search…');
+      search.focus();
+      setInputValue(search, '');
+      await sleep(250);
+      collectFromAliases(compose).forEach((email) => found.add(email));
+    }
+
+    const menus = fromDropdownNodes(compose);
+    const scrollables = [];
+    for (const menu of menus) {
+      const nodes = [menu, ...menu.querySelectorAll('*')];
+      for (const el of nodes) {
+        if (!visible(el)) continue;
+        if (el.scrollHeight - el.clientHeight < 24) continue;
+        scrollables.push(el);
+      }
+    }
+
+    if (scrollables.length) {
+      onProgress('Scrolling alias list…');
+      for (const el of scrollables) {
+        let stable = 0;
+        let lastCount = found.size;
+        for (let i = 0; i < 40; i += 1) {
+          el.scrollTop = Math.min(el.scrollTop + Math.max(120, el.clientHeight - 20), el.scrollHeight);
+          await sleep(120);
+          collectEmailsFromRoot(el, found);
+          collectFromAliases(compose).forEach((email) => found.add(email));
+          if (found.size === lastCount) {
+            stable += 1;
+            if (stable >= 3 && el.scrollTop + el.clientHeight >= el.scrollHeight - 4) break;
+          } else {
+            stable = 0;
+            lastCount = found.size;
+          }
+        }
+        el.scrollTop = 0;
+      }
+    }
+
+    if (search && found.size <= 1) {
+      onProgress('Probing alias search…');
+      const alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789';
+      for (const ch of alphabet) {
+        setInputValue(search, ch);
+        await sleep(180);
+        collectFromAliases(compose).forEach((email) => found.add(email));
+        if (found.size >= 10) break;
+      }
+      setInputValue(search, '');
+      await sleep(150);
+      collectFromAliases(compose).forEach((email) => found.add(email));
+    }
+
+    return [...found].filter(Boolean);
   }
 
   function findComposeCloseButton(compose) {
@@ -427,6 +608,7 @@
 
   async function listAliases(onProgress = () => {}) {
     await waitUntilReady(onProgress);
+    const fromState = aliasesFromPageState();
     const existing = latestUsableCompose();
     let compose = existing;
     let opened = false;
@@ -439,16 +621,24 @@
     }
 
     try {
-      let aliases = collectFromAliases(compose);
+      await openFromMenu(compose);
+      await sleep(350);
+      let aliases = await harvestAliasMenu(compose, onProgress);
+      await closeFromMenu(compose);
+
+      const current = currentFromEmail(compose);
+      if (current) aliases.push(current);
+      aliases.push(...fromState);
+      aliases = [...new Set(aliases.map(normalizeEmail).filter(Boolean))];
+
       if (aliases.length <= 1) {
+        onProgress('Retrying From alias menu…');
         await openFromMenu(compose);
-        await sleep(200);
-        aliases = collectFromAliases(compose);
+        await sleep(500);
+        aliases = [...new Set([...(await harvestAliasMenu(compose, onProgress)), ...aliases, ...fromState])];
         await closeFromMenu(compose);
       }
-      const current = currentFromEmail(compose);
-      if (current && !aliases.includes(current)) aliases.push(current);
-      aliases = [...new Set(aliases.map(normalizeEmail).filter(Boolean))];
+
       if (!aliases.length) {
         const fallback = detectLoggedInEmail();
         if (fallback) aliases = [fallback];
@@ -470,16 +660,26 @@
       const option = [...select.options].find((opt) =>
         emailsFromNode(opt).some((item) => emailsMatch(item, wanted))
       );
-      if (!option) throw new Error(`From alias ${wanted} was not found in Private Email.`);
-      select.value = option.value;
-      select.dispatchEvent(new Event('input', { bubbles: true }));
-      select.dispatchEvent(new Event('change', { bubbles: true }));
-      await sleep(200);
-      if (emailsMatch(currentFromEmail(compose), wanted)) return true;
+      if (option) {
+        select.value = option.value;
+        select.dispatchEvent(new Event('input', { bubbles: true }));
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+        await sleep(200);
+        if (emailsMatch(currentFromEmail(compose), wanted)) return true;
+      }
     }
 
     await openFromMenu(compose);
-    await sleep(200);
+    await sleep(250);
+
+    const search = findFromSearchInput(compose);
+    if (search) {
+      const local = wanted.split('@')[0] || wanted;
+      search.focus();
+      setInputValue(search, local);
+      await sleep(280);
+    }
+
     const menus = fromDropdownNodes(compose);
     const candidates = [];
     for (const menu of menus.length ? menus : [compose, document.body]) {
@@ -492,11 +692,7 @@
         candidates.push(el);
       }
     }
-    candidates.sort((a, b) => {
-      const aText = (a.innerText || '').length;
-      const bText = (b.innerText || '').length;
-      return aText - bText;
-    });
+    candidates.sort((a, b) => (a.innerText || '').length - (b.innerText || '').length);
     const pick = candidates[0];
     if (!pick) {
       await closeFromMenu(compose);
