@@ -229,15 +229,14 @@
         </div>`;
     }
     const selectedCount = selectedAliasList().length;
-    const rows = aliases
+    const chips = aliases
       .map((email) => {
-        const checked = state.selectedAliases.has(email);
-        return `<label class="alias-row">
-          <input type="checkbox" class="alias-check" data-alias="${esc(email)}" ${
-            checked ? 'checked' : ''
-          } ${loading || state.busy ? 'disabled' : ''} />
-          <span class="alias-row-email">${esc(email)}</span>
-        </label>`;
+        const on = state.selectedAliases.has(email);
+        return `<button type="button" class="alias-chip${on ? ' is-on' : ''}" data-alias="${esc(
+          email
+        )}" title="${esc(email)}" ${loading || state.busy ? 'disabled' : ''} aria-pressed="${
+          on ? 'true' : 'false'
+        }">${esc(email)}</button>`;
       })
       .join('');
     return `
@@ -254,7 +253,7 @@
             loading || state.busy ? 'disabled' : ''
           }>Clear</button>
         </div>
-        <div class="alias-list">${rows}</div>
+        <div class="alias-chip-grid">${chips}</div>
         ${err}
       </div>`;
   }
@@ -303,12 +302,15 @@
   }
 
   function wireAliasControls() {
-    root.querySelectorAll('.alias-check').forEach((box) => {
-      box.addEventListener('change', () => {
-        const email = String(box.dataset.alias || '').toLowerCase();
+    root.querySelectorAll('.alias-chip[data-alias]').forEach((chip) => {
+      chip.addEventListener('click', () => {
+        const email = String(chip.dataset.alias || '').toLowerCase();
         if (!email) return;
-        if (box.checked) state.selectedAliases.add(email);
-        else state.selectedAliases.delete(email);
+        if (state.selectedAliases.has(email)) state.selectedAliases.delete(email);
+        else state.selectedAliases.add(email);
+        const on = state.selectedAliases.has(email);
+        chip.classList.toggle('is-on', on);
+        chip.setAttribute('aria-pressed', on ? 'true' : 'false');
         void persistSelectedAliases().then(() => {
           updateMailSelectionSummary();
           const count = root.querySelector('.alias-count');
