@@ -446,14 +446,24 @@
     }
   }
 
+  function selectedCount() {
+    return selectedSendable().length;
+  }
+
   function statsHtml() {
     const s = state.stats || {};
     return `
-      <div class="stats">
+      <div class="stats" id="statsBar">
         <span class="stat-pill"><b>${s.total ?? 0}</b><span>accounts</span></span>
         <span class="stat-pill"><b>${s.sent ?? 0}</b><span>sent</span></span>
         <span class="stat-pill"><b>${s.verified ?? 0}</b><span>verified</span></span>
+        <span class="stat-pill stat-pill-selected"><b id="selectedStat">${selectedCount()}</b><span>selected</span></span>
       </div>`;
+  }
+
+  function syncSelectedStat() {
+    const el = root.getElementById('selectedStat');
+    if (el) el.textContent = String(selectedCount());
   }
 
   function progressHtml() {
@@ -847,7 +857,10 @@
     const editing = state.editingTpl;
     body.innerHTML = `
       <div class="page">
-        <div class="meta-bar">${gmailChipHtml()}</div>
+        <div class="meta-bar">
+          ${statsHtml()}
+          ${gmailChipHtml()}
+        </div>
         <div class="scroll">
           <form id="tplForm">
             <div class="field">
@@ -965,8 +978,9 @@
   function syncSendButton() {
     const btn = root.getElementById('sendBtn');
     const note = root.getElementById('selectCount');
-    const count = selectedSendable().length;
+    const count = selectedCount();
     const aliasOk = !supportsAliases() || selectedAliasList().length > 0;
+    syncSelectedStat();
     if (note) {
       if (supportsAliases() && !selectedAliasList().length) {
         note.textContent = 'Open Mail tab and select From aliases';
@@ -1130,6 +1144,7 @@
     if (pills[0]) pills[0].textContent = String(state.stats.total ?? 0);
     if (pills[1]) pills[1].textContent = String(state.stats.sent ?? 0);
     if (pills[2]) pills[2].textContent = String(state.stats.verified ?? 0);
+    syncSelectedStat();
     const byId = new Map((state.accounts || []).map((a) => [a.id, a]));
     body.querySelectorAll('.mail-row[data-id]').forEach((el) => {
       const acc = byId.get(el.dataset.id);
