@@ -982,6 +982,23 @@ button.wide {
   padding-right: 16px;
 }
 
+.foot button.stop-btn {
+  border-color: rgba(196, 82, 69, 0.45);
+  background: rgba(196, 82, 69, 0.1);
+  color: var(--rose);
+}
+
+.foot button.stop-btn:hover:not(:disabled) {
+  border-color: rgba(196, 82, 69, 0.7);
+  background: rgba(196, 82, 69, 0.18);
+}
+
+.foot button.stop-btn.is-stopping,
+.foot button.stop-btn:disabled {
+  opacity: 0.7;
+  cursor: wait;
+}
+
 .foot-note {
   flex: 1 1 auto;
   min-width: 0;

@@ -49,6 +49,7 @@
     aliasesError: '',
     sendIntervalMin: DEFAULT_INTERVAL_MIN,
     busy: false,
+    stopRequested: false,
     editingTpl: null,
     sendProgress: null,
     busyMode: null,
@@ -794,7 +795,9 @@
             <span>min</span>
           </label>
           <span class="foot-note" id="selectCount"></span>
-          <button type="button" class="primary" id="sendBtn">Send</button>
+          <button type="button" class="${state.busy ? 'secondary stop-btn' : 'primary'}" id="sendBtn">
+            ${state.busy ? (state.stopRequested ? 'Stopping…' : 'Stop') : 'Send'}
+          </button>
         </div>
       </div>`;
 
@@ -819,13 +822,30 @@
       void persistSendInterval();
     });
     root.getElementById('sendBtn')?.addEventListener('click', () => {
-      void sendSelected();
+      if (state.busy) stopSending();
+      else void sendSelected();
     });
 
     wireMailPager();
     wireSelection();
     syncMailTab();
     syncSendButton();
+  }
+
+  function stopSending() {
+    if (!state.busy || state.stopRequested) return;
+    state.stopRequested = true;
+    const btn = root.getElementById('sendBtn');
+    if (btn) {
+      btn.textContent = 'Stopping…';
+      btn.disabled = true;
+      btn.classList.add('is-stopping');
+    }
+    const p = state.sendProgress;
+    if (p) {
+      setSendProgress(p.index, p.total, 'Stopping after current step…');
+      updateProgressDom();
+    }
   }
 
   function normalizeIntervalMin(value) {
@@ -855,6 +875,7 @@
   }
 
   async function waitBetweenSends(index, total) {
+    if (state.stopRequested) return false;
     const minutes = normalizeIntervalMin(state.sendIntervalMin);
     let waitMs;
     if (minutes <= 0) {
@@ -864,11 +885,17 @@
     }
     const endsAt = Date.now() + waitMs;
     while (Date.now() < endsAt) {
+      if (state.stopRequested) {
+        setSendProgress(index, total, 'Stopping…');
+        updateProgressDom();
+        return false;
+      }
       const left = endsAt - Date.now();
       setSendProgress(index, total, `Next send in ${formatWaitLabel(left)}`);
       updateProgressDom();
       await window.CVListHuman.delay(Math.min(1000, left));
     }
+    return !state.stopRequested;
   }
 
   function skipSummary(parsed, storedSkip) {
@@ -1031,7 +1058,8 @@
 
   function sendButtonLabel() {
     const count = selectedSendable().length;
-    if (state.busy) return 'Sending…';
+    if (state.busy && state.stopRequested) return 'Stopping…';
+    if (state.busy) return 'Stop';
     if (!state.gmailReady) return `${mailPlatform()} loading…`;
     if (supportsAliases() && !selectedAliasList().length) return 'Open Mail tab';
     return count ? `Send (${count})` : 'Send';
@@ -1049,8 +1077,17 @@
       } else note.textContent = count ? `${count} selected` : 'Select addresses to send';
     }
     if (!btn) return;
-    btn.disabled = state.busy || !state.gmailReady || !count || !aliasOk;
-    btn.textContent = state.busy ? 'Sending…' : sendButtonLabel();
+    if (state.busy) {
+      btn.classList.remove('primary');
+      btn.classList.add('secondary', 'stop-btn');
+      btn.disabled = state.stopRequested;
+      btn.textContent = sendButtonLabel();
+      return;
+    }
+    btn.classList.add('primary');
+    btn.classList.remove('secondary', 'stop-btn', 'is-stopping');
+    btn.disabled = !state.gmailReady || !count || !aliasOk;
+    btn.textContent = sendButtonLabel();
   }
 
   async function sendSelected() {
@@ -1072,10 +1109,13 @@
     }
 
     state.busy = true;
+    state.stopRequested = false;
     state.busyMode = 'direct';
     setSendProgress(0, chosen.length, 'Starting…');
     render();
 
+    let stoppedByUser = false;
+    let failed = false;
     try {
       const data = await Api().prepareDirectSend(
         chosen.length,
@@ -1089,60 +1129,81 @@
       }
 
       await Mail().waitUntilGmailReady((msg) => {
+        if (state.stopRequested) return;
         setSendProgress(0, items.length, msg);
         updateProgressDom();
       });
 
-      const fromPool = supportsAliases() ? selectedAliasList() : [];
+      if (state.stopRequested) {
+        stoppedByUser = true;
+      } else {
+        const fromPool = supportsAliases() ? selectedAliasList() : [];
 
-      for (let i = 0; i < items.length; i += 1) {
-        const item = items[i];
-        const fromHint = fromPool.length ? randomSelectedAlias() : null;
-        setSendProgress(i, items.length, fromHint ? `${item.email} ← ${fromHint}` : item.email);
-        updateProgressDom();
-        try {
-          await Mail().sendCard(
-            {
-              toEmail: item.email,
-              messageTitle: item.title,
-              messageBody: item.body,
-              fromEmail: fromHint,
-              fromEmails: fromPool
-            },
-            (msg) => {
-              setSendProgress(i, items.length, `${item.email}: ${msg}`);
-              updateProgressDom();
-            }
-          );
-          const marked = await Api().markAccountSent(item.accountId);
-          state.accounts = marked.accounts || state.accounts;
-          state.stats = marked.stats || state.stats;
-          state.selected.delete(item.accountId);
-          setSendProgress(i + 1, items.length, `${item.email}: sent`);
-          updateProgressDom();
-          patchMailCards();
-          syncSendButton();
-          if (i + 1 < items.length) {
-            await waitBetweenSends(i + 1, items.length);
+        for (let i = 0; i < items.length; i += 1) {
+          if (state.stopRequested) {
+            stoppedByUser = true;
+            break;
           }
-        } catch (err) {
-          toast('err', 'Send failed', err.message || 'Send failed.');
-          break;
+          const item = items[i];
+          const fromHint = fromPool.length ? randomSelectedAlias() : null;
+          setSendProgress(i, items.length, fromHint ? `${item.email} ← ${fromHint}` : item.email);
+          updateProgressDom();
+          try {
+            await Mail().sendCard(
+              {
+                toEmail: item.email,
+                messageTitle: item.title,
+                messageBody: item.body,
+                fromEmail: fromHint,
+                fromEmails: fromPool
+              },
+              (msg) => {
+                setSendProgress(i, items.length, `${item.email}: ${msg}`);
+                updateProgressDom();
+              }
+            );
+            const marked = await Api().markAccountSent(item.accountId);
+            state.accounts = marked.accounts || state.accounts;
+            state.stats = marked.stats || state.stats;
+            state.selected.delete(item.accountId);
+            setSendProgress(i + 1, items.length, `${item.email}: sent`);
+            updateProgressDom();
+            patchMailCards();
+            syncSendButton();
+            if (i + 1 < items.length) {
+              const cont = await waitBetweenSends(i + 1, items.length);
+              if (!cont) {
+                stoppedByUser = true;
+                break;
+              }
+            }
+          } catch (err) {
+            failed = true;
+            toast('err', 'Send failed', err.message || 'Send failed.');
+            break;
+          }
         }
       }
 
       const sentNow = items.filter((item) =>
         (state.accounts || []).some((account) => account.id === item.accountId && account.sent)
       ).length;
-      if (sentNow === items.length) {
+      if (stoppedByUser) {
+        toast(
+          'ok',
+          'Stopped',
+          sentNow ? `Sent ${sentNow}. The rest are still unsent.` : 'Sending stopped. Nothing new was sent.'
+        );
+      } else if (!failed && sentNow === items.length) {
         toast('ok', 'Done', `Sent ${sentNow} from ${mailPlatform()}.`);
-      } else if (sentNow) {
+      } else if (!failed && sentNow) {
         toast('ok', 'Stopped', `Sent ${sentNow}. The rest are still unsent.`);
       }
     } catch (err) {
       toast('err', 'Could not send', err.message);
     } finally {
       state.busy = false;
+      state.stopRequested = false;
       state.busyMode = null;
       state.sendProgress = null;
       try {
