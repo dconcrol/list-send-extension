@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ConnectV",
-  "version": "1.6.4",
+  "version": "1.6.5",
   "description": "List send for Gmail and Private Email: upload CSV/Excel, templates, and direct send. Gmail also supports schedule send.",
   "permissions": ["storage", "debugger"],
   "host_permissions": [

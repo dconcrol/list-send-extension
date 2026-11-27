@@ -771,7 +771,7 @@
         <div class="scroll">
           <div class="toolbar">
             <button type="button" class="primary" id="uploadBtn">Upload list</button>
-            <input type="file" id="listFile" accept=".csv,.xlsx,text/csv,text/plain,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden />
+            <input type="file" id="listFile" accept=".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,text/plain" hidden />
             <input class="grow" id="search" placeholder="Search list…" value="${esc(state.query)}" />
             <button type="button" class="secondary" id="clearBtn" ${
               state.accounts.length ? '' : 'disabled'
