@@ -143,9 +143,36 @@
   }
 
   async function inflateRaw(bytes) {
-    const ds = new DecompressionStream('deflate-raw');
-    const stream = new Blob([bytes]).stream().pipeThrough(ds);
-    return new Uint8Array(await new Response(stream).arrayBuffer());
+    try {
+      const ds = new DecompressionStream('deflate-raw');
+      const stream = new Blob([bytes]).stream().pipeThrough(ds);
+      return new Uint8Array(await new Response(stream).arrayBuffer());
+    } catch (err) {
+      const msg = String(err && err.message ? err.message : err || '');
+      if (/failed to fetch|networkerror|decompression/i.test(msg)) {
+        throw new Error('Could not decompress this Excel file. Save as .xlsx or .csv and try again.');
+      }
+      throw err;
+    }
+  }
+
+  function findDataDescriptor(buf, view, dataStart) {
+    // ZIP bit 3: sizes come after the file data in a data descriptor.
+    let i = dataStart;
+    while (i + 16 <= buf.length) {
+      if (u32(view, i) === 0x08074b50) {
+        return { compSize: u32(view, i + 8), next: i + 16 };
+      }
+      // Descriptor without signature (some writers omit it).
+      if (i > dataStart + 4 && u32(view, i + 8) === 0x04034b50) {
+        return { compSize: i - dataStart, next: i };
+      }
+      if (u32(view, i) === 0x04034b50 || u32(view, i) === 0x02014b50) {
+        return { compSize: Math.max(0, i - dataStart), next: i };
+      }
+      i += 1;
+    }
+    throw new Error('This Excel file uses an unsupported ZIP layout. Save as .csv and upload that.');
   }
 
   async function unzip(arrayBuffer) {
@@ -155,18 +182,30 @@
     let offset = 0;
     while (offset + 30 <= buf.length) {
       if (u32(view, offset) !== 0x04034b50) break;
+      const flags = u16(view, offset + 6);
       const method = u16(view, offset + 8);
-      const compSize = u32(view, offset + 18);
+      let compSize = u32(view, offset + 18);
       const nameLen = u16(view, offset + 26);
       const extraLen = u16(view, offset + 28);
       const nameBytes = buf.subarray(offset + 30, offset + 30 + nameLen);
       const name = new TextDecoder().decode(nameBytes);
       const dataStart = offset + 30 + nameLen + extraLen;
+      let dataEnd = dataStart + compSize;
+      if ((flags & 0x8) !== 0 || compSize === 0) {
+        const desc = findDataDescriptor(buf, view, dataStart);
+        compSize = desc.compSize;
+        dataEnd = dataStart + compSize;
+        offset = desc.next;
+      } else {
+        offset = dataEnd;
+      }
+      if (dataEnd > buf.length) {
+        throw new Error('Excel file looks truncated or corrupted. Re-export as .xlsx or .csv.');
+      }
       const data = buf.subarray(dataStart, dataStart + compSize);
-      if (method === 0) files[name] = data;
+      if (method === 0) files[name] = data.slice();
       else if (method === 8) files[name] = await inflateRaw(data);
-      else throw new Error(`Cannot read ${name} from this Excel file.`);
-      offset = dataStart + compSize;
+      else throw new Error(`Cannot read ${name} from this Excel file (compression ${method}).`);
     }
     return files;
   }
@@ -273,15 +312,28 @@
   }
 
   async function parseEmailListFile(file) {
-    const name = file && file.name ? file.name : '';
+    if (!file) throw new Error('No file selected.');
+    const name = file.name ? file.name : '';
     if (isLegacyXlsName(name)) {
       throw new Error('Old .xls is not supported. Save the sheet as .xlsx or .csv, then upload again.');
     }
     let rows;
-    if (isXlsxName(name) || (file && /spreadsheetml/i.test(file.type || ''))) {
-      rows = await rowsFromXlsx(await file.arrayBuffer());
-    } else {
-      rows = rowsFromCsv(await file.text());
+    try {
+      if (isXlsxName(name) || /spreadsheetml/i.test(file.type || '')) {
+        rows = await rowsFromXlsx(await file.arrayBuffer());
+      } else if (/\.csv$/i.test(name) || /csv|text\/plain/i.test(file.type || '') || !name) {
+        rows = rowsFromCsv(await file.text());
+      } else {
+        throw new Error('Use a .csv or .xlsx file.');
+      }
+    } catch (err) {
+      const msg = String(err && err.message ? err.message : err || '');
+      if (/failed to fetch/i.test(msg)) {
+        throw new Error(
+          'Could not read this Excel file. Open it in Excel/Sheets, Save as .csv or .xlsx, then upload again.'
+        );
+      }
+      throw err instanceof Error ? err : new Error(msg || 'Could not read the list file.');
     }
     return collectFromRows(rows);
   }
